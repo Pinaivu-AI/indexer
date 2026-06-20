@@ -64,6 +64,16 @@ jobs:
           SSH="ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -i /tmp/deploy_key $EC2_USER@$EC2_HOST"
           $SSH 'bash -s' << 'REMOTE'
           set -e
+          if ! command -v cc &> /dev/null; then
+            if command -v dnf &> /dev/null; then
+              sudo dnf install -y gcc pkgconf-pkg-config openssl-devel
+            elif command -v apt-get &> /dev/null; then
+              sudo apt-get update -y
+              sudo apt-get install -y build-essential pkg-config libssl-dev
+            else
+              sudo yum install -y gcc pkgconfig openssl-devel
+            fi
+          fi
           if ! command -v cargo &> /dev/null; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
