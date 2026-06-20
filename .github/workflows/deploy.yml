@@ -64,7 +64,10 @@ jobs:
           SSH="ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -i /tmp/deploy_key $EC2_USER@$EC2_HOST"
           $SSH 'bash -s' << 'REMOTE'
           set -e
-          if ! command -v cc &> /dev/null; then
+          NEED_CC=0; command -v cc &> /dev/null || NEED_CC=1
+          NEED_PKGCONFIG=0; command -v pkg-config &> /dev/null || NEED_PKGCONFIG=1
+          NEED_OPENSSL=0; [ -f /usr/include/openssl/ssl.h ] || NEED_OPENSSL=1
+          if [ "$NEED_CC" = "1" ] || [ "$NEED_PKGCONFIG" = "1" ] || [ "$NEED_OPENSSL" = "1" ]; then
             if command -v dnf &> /dev/null; then
               sudo dnf install -y gcc pkgconf-pkg-config openssl-devel
             elif command -v apt-get &> /dev/null; then
