@@ -1,0 +1,127 @@
+name: Deploy Explorer Indexer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-explorer-indexer
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Copy source to EC2 ────────────────────────────────────────────────
+      # Plain Rust service (no enclave) — runs on the same host as the
+      # coordinator/gateway, on its own port, with a READ-ONLY DB role.
+      - name: Copy source to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PINAIVU_EC2_HOST }}
+          username: ${{ secrets.PINAIVU_EC2_USER }}
+          key: ${{ secrets.PINAIVU_EC2_SSH_KEY }}
+          source: "src,Cargo.toml,Cargo.lock"
+          target: "~/pinaivu-explorer-indexer/"
+          overwrite: true
+          rm: false
+
+      # ── Write env file to EC2 ─────────────────────────────────────────────
+      # EXPLORER_INDEXER_ENV_FILE is a single GitHub secret containing the
+      # full contents of the indexer's runtime .env (DATABASE_URL — a
+      # READ-ONLY role against the coordinator's Postgres — INDEXER_BIND,
+      # WALRUS_PUBLISHER_URL, ARCHIVE_AFTER_HOURS, RUST_LOG).
+      # Settings → Secrets → EXPLORER_INDEXER_ENV_FILE.
+      - name: Write env file to EC2
+        env:
+          EC2_HOST: ${{ secrets.PINAIVU_EC2_HOST }}
+          EC2_USER: ${{ secrets.PINAIVU_EC2_USER }}
+          EC2_KEY: ${{ secrets.PINAIVU_EC2_SSH_KEY }}
+          EXPLORER_INDEXER_ENV_FILE: ${{ secrets.EXPLORER_INDEXER_ENV_FILE }}
+        run: |
+          echo "$EC2_KEY" > /tmp/deploy_key && chmod 600 /tmp/deploy_key
+          printf '%s' "$EXPLORER_INDEXER_ENV_FILE" | \
+            ssh -o StrictHostKeyChecking=no \
+                -o ServerAliveInterval=30 \
+                -i /tmp/deploy_key \
+                "$EC2_USER@$EC2_HOST" \
+                "cat > ~/pinaivu-explorer-indexer/.env && chmod 600 ~/pinaivu-explorer-indexer/.env"
+          rm -f /tmp/deploy_key
+
+      # ── Install Rust + build ───────────────────────────────────────────────
+      - name: Install Rust and build
+        env:
+          EC2_HOST: ${{ secrets.PINAIVU_EC2_HOST }}
+          EC2_USER: ${{ secrets.PINAIVU_EC2_USER }}
+          EC2_KEY: ${{ secrets.PINAIVU_EC2_SSH_KEY }}
+        run: |
+          echo "$EC2_KEY" > /tmp/deploy_key && chmod 600 /tmp/deploy_key
+          SSH="ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -i /tmp/deploy_key $EC2_USER@$EC2_HOST"
+          $SSH 'bash -s' << 'REMOTE'
+          set -e
+          if ! command -v cargo &> /dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          fi
+          source "$HOME/.cargo/env"
+          rustc --version
+          cd ~/pinaivu-explorer-indexer
+          cargo build --release
+          REMOTE
+          rm -f /tmp/deploy_key
+
+      # ── Install/refresh systemd unit + restart ────────────────────────────
+      - name: Install systemd unit and restart
+        env:
+          EC2_HOST: ${{ secrets.PINAIVU_EC2_HOST }}
+          EC2_USER: ${{ secrets.PINAIVU_EC2_USER }}
+          EC2_KEY: ${{ secrets.PINAIVU_EC2_SSH_KEY }}
+        run: |
+          echo "$EC2_KEY" > /tmp/deploy_key && chmod 600 /tmp/deploy_key
+          SSH="ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -i /tmp/deploy_key $EC2_USER@$EC2_HOST"
+          $SSH 'bash -s' << 'REMOTE'
+          set -e
+          USER_NAME=$(whoami)
+          printf '[Unit]\nDescription=Pinaivu explorer indexer\nAfter=network.target\n[Service]\nType=simple\nUser=%s\nWorkingDirectory=/home/%s/pinaivu-explorer-indexer\nEnvironmentFile=/home/%s/pinaivu-explorer-indexer/.env\nExecStart=/home/%s/pinaivu-explorer-indexer/target/release/pinaivu-indexer\nRestart=always\nRestartSec=2\n[Install]\nWantedBy=multi-user.target\n' \
+            "$USER_NAME" "$USER_NAME" "$USER_NAME" "$USER_NAME" \
+            | sudo tee /etc/systemd/system/pinaivu-explorer-indexer.service > /dev/null
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now pinaivu-explorer-indexer.service
+          sudo systemctl restart pinaivu-explorer-indexer.service
+          sleep 2
+          sudo systemctl is-active pinaivu-explorer-indexer.service
+          REMOTE
+          rm -f /tmp/deploy_key
+
+      # ── Health check ──────────────────────────────────────────────────────
+      - name: Verify health
+        env:
+          EC2_HOST: ${{ secrets.PINAIVU_EC2_HOST }}
+          EC2_USER: ${{ secrets.PINAIVU_EC2_USER }}
+          EC2_KEY: ${{ secrets.PINAIVU_EC2_SSH_KEY }}
+        run: |
+          echo "$EC2_KEY" > /tmp/deploy_key && chmod 600 /tmp/deploy_key
+          SSH="ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -i /tmp/deploy_key $EC2_USER@$EC2_HOST"
+          $SSH 'bash -s' << 'REMOTE'
+          set -e
+          BIND=$(grep -E '^INDEXER_BIND=' ~/pinaivu-explorer-indexer/.env | cut -d= -f2)
+          PORT="${BIND##*:}"
+          PORT="${PORT:-3100}"
+          for i in $(seq 1 10); do
+            if curl -sf "http://localhost:${PORT}/health" > /dev/null 2>&1; then
+              echo "Explorer indexer healthy on :${PORT}"
+              curl -s "http://localhost:${PORT}/health"
+              exit 0
+            fi
+            echo "Waiting for indexer... (attempt $i/10)"
+            sleep 3
+          done
+          echo "ERROR: explorer-indexer health check failed"
+          sudo journalctl -u pinaivu-explorer-indexer.service --no-pager -n 100
+          exit 1
+          REMOTE
+          rm -f /tmp/deploy_key
