@@ -119,6 +119,32 @@ pub async fn set_walrus_blob_id(
     Ok(())
 }
 
+/// Total jobs served as primary, grouped by peer_id. Used to attach a
+/// `jobs_served` count to the live node list in one query.
+pub async fn node_job_counts(pool: &PgPool) -> Result<Vec<(String, i64)>> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT receipt_json->>'primary_peer_id' AS peer_id, COUNT(*) AS n
+         FROM routing_receipts
+         WHERE receipt_json->>'primary_peer_id' IS NOT NULL
+         GROUP BY receipt_json->>'primary_peer_id'",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Jobs served as primary by a single peer_id.
+pub async fn node_job_count(pool: &PgPool, peer_id: &str) -> Result<i64> {
+    let (n,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM routing_receipts
+         WHERE receipt_json->>'primary_peer_id' = $1",
+    )
+    .bind(peer_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n)
+}
+
 /// Receipts served by a given peer_id (from receipt_json payloads).
 pub async fn receipts_for_node(
     pool: &PgPool,

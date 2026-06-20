@@ -8,6 +8,7 @@ use tower_http::trace::TraceLayer;
 
 mod api;
 mod archive;
+mod coordinator;
 mod db;
 mod config;
 
@@ -30,6 +31,13 @@ async fn main() -> Result<()> {
 
     let walrus = Arc::new(archive::WalrusClient::new(cfg.walrus_publisher_url.clone()));
 
+    let coordinator = Arc::new(coordinator::CoordinatorClient::new(
+        cfg.coordinator_url.clone(),
+        cfg.insecure_coordinator,
+        cfg.node_online_ttl_secs,
+    ));
+    tracing::info!(coordinator = %cfg.coordinator_url, online_ttl_secs = cfg.node_online_ttl_secs, "coordinator client ready");
+
     // Archive cron: every 5 minutes pack receipts older than ARCHIVE_AFTER_MINUTES to Walrus.
     let sched = JobScheduler::new().await?;
     {
@@ -50,7 +58,7 @@ async fn main() -> Result<()> {
     sched.start().await?;
     tracing::info!("archive cron scheduler started");
 
-    let state = api::AppState { pool, walrus };
+    let state = api::AppState { pool, walrus, coordinator };
 
     let router = Router::new()
         .merge(api::routes())
