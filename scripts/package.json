@@ -1,0 +1,8 @@
+{
+  "name": "decode-walrus-blob",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "cbor": "^9.0.2"
+  }
+}
