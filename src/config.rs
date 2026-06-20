@@ -4,8 +4,8 @@ pub struct Config {
     pub database_url: String,
     pub bind: String,
     pub walrus_publisher_url: String,
-    /// How many hours before a receipt is eligible for Walrus archiving.
-    pub archive_after_hours: i64,
+    /// How many minutes before a receipt is eligible for Walrus archiving.
+    pub archive_after_minutes: i64,
 }
 
 impl Config {
@@ -21,10 +21,10 @@ impl Config {
                 .unwrap_or_else(|_| "0.0.0.0:3100".into()),
             walrus_publisher_url: std::env::var("WALRUS_PUBLISHER_URL")
                 .unwrap_or_else(|_| "https://publisher.walrus.site".into()),
-            archive_after_hours: std::env::var("ARCHIVE_AFTER_HOURS")
+            archive_after_minutes: std::env::var("ARCHIVE_AFTER_MINUTES")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(24),
+                .unwrap_or(5),
         })
     }
 }

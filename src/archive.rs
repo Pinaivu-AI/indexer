@@ -1,5 +1,5 @@
 //! Walrus archiver. Packs unarchived routing receipts older than
-//! ARCHIVE_AFTER_HOURS into a CBOR batch, uploads to Walrus, and
+//! ARCHIVE_AFTER_MINUTES into a CBOR batch, uploads to Walrus, and
 //! stamps each row with the resulting blob_id.
 
 use std::sync::Arc;
@@ -50,15 +50,15 @@ impl WalrusClient {
     }
 }
 
-/// Called by the cron job every 10 minutes.
+/// Called by the cron job every 5 minutes.
 pub async fn run_archive_job(pool: &PgPool, walrus: &Arc<WalrusClient>) -> Result<()> {
-    // Read ARCHIVE_AFTER_HOURS from env each tick so it's adjustable without restart.
-    let hours: i64 = std::env::var("ARCHIVE_AFTER_HOURS")
+    // Read ARCHIVE_AFTER_MINUTES from env each tick so it's adjustable without restart.
+    let minutes: i64 = std::env::var("ARCHIVE_AFTER_MINUTES")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(24);
+        .unwrap_or(5);
 
-    let rows = db::unarchived_older_than(pool, hours).await?;
+    let rows = db::unarchived_older_than(pool, minutes).await?;
     if rows.is_empty() {
         return Ok(());
     }

@@ -30,13 +30,13 @@ async fn main() -> Result<()> {
 
     let walrus = Arc::new(archive::WalrusClient::new(cfg.walrus_publisher_url.clone()));
 
-    // Archive cron: every 10 minutes pack receipts older than 24 h to Walrus.
+    // Archive cron: every 5 minutes pack receipts older than ARCHIVE_AFTER_MINUTES to Walrus.
     let sched = JobScheduler::new().await?;
     {
         let pool2 = pool.clone();
         let walrus2 = walrus.clone();
         sched
-            .add(Job::new_async("0 */10 * * * *", move |_, _| {
+            .add(Job::new_async("0 */5 * * * *", move |_, _| {
                 let p = pool2.clone();
                 let w = walrus2.clone();
                 Box::pin(async move {

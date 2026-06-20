@@ -85,20 +85,20 @@ pub async fn recent_receipts(
     Ok(rows)
 }
 
-/// Receipts older than `hours` that haven't been archived yet.
+/// Receipts older than `minutes` that haven't been archived yet.
 pub async fn unarchived_older_than(
     pool: &PgPool,
-    hours: i64,
+    minutes: i64,
 ) -> Result<Vec<ReceiptRow>> {
     let rows = sqlx::query_as::<_, ReceiptRow>(
         "SELECT request_id, receipt_json, created_at, walrus_blob_id
          FROM routing_receipts
          WHERE walrus_blob_id IS NULL
-           AND created_at < NOW() - ($1 || ' hours')::INTERVAL
+           AND created_at < NOW() - ($1 || ' minutes')::INTERVAL
          ORDER BY created_at
          LIMIT 500",
     )
-    .bind(hours)
+    .bind(minutes)
     .fetch_all(pool)
     .await?;
     Ok(rows)
